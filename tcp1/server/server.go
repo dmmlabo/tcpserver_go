@@ -10,17 +10,17 @@ import (
 )
 
 const (
-	TCP_PROTOCOL           = "tcp"
-	LISTENER_CLOSE_MATCHER = "use of closed network connection"
+	tcpProtocol          = "tcp"
+	listenerCloseMatcher = "use of closed network connection"
 )
 
-type ServerError struct {
+type Error struct {
 	S   *Server
 	Op  string
 	Err error
 }
 
-func (e *ServerError) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("Server[%v] (%v): %v", e.S.Addr, e.Op, e.Err)
 }
 
@@ -43,20 +43,20 @@ func NewServer(addr string) (*Server, error) {
 func (s *Server) StopListener() {
 	if s.listener != nil {
 		if err := s.listener.Close(); err != nil {
-			log.Println(&ServerError{s, "CloseListener", err})
+			log.Println(&Error{s, "CloseListener", err})
 		}
 	}
 }
 
 func (s *Server) Listen(shutdownCtx, gshutdownCtx context.Context) (context.Context, error) {
-	tcpAddr, err := net.ResolveTCPAddr(TCP_PROTOCOL, s.Addr)
+	tcpAddr, err := net.ResolveTCPAddr(tcpProtocol, s.Addr)
 	if err != nil {
-		return nil, &ServerError{s, "ResolveTCPAddr", err}
+		return nil, &Error{s, "ResolveTCPAddr", err}
 	}
 
-	l, err := net.ListenTCP(TCP_PROTOCOL, tcpAddr)
+	l, err := net.ListenTCP(tcpProtocol, tcpAddr)
 	if err != nil {
-		return nil, &ServerError{s, "ListenTCP", err}
+		return nil, &Error{s, "ListenTCP", err}
 	}
 	s.listener = l
 
@@ -70,7 +70,7 @@ func (s *Server) Listen(shutdownCtx, gshutdownCtx context.Context) (context.Cont
 func (s *Server) handleListener(shutdownCtx, gshutdownCtx, errCtx context.Context, errCancel context.CancelFunc) {
 	defer func() {
 		if err := s.listener.Close(); err != nil && !listenerCloseError(err) {
-			log.Println(&ServerError{s, "CloseListener", err})
+			log.Println(&Error{s, "CloseListener", err})
 		}
 		close(s.ChClosed)
 	}()
@@ -80,7 +80,7 @@ func (s *Server) handleListener(shutdownCtx, gshutdownCtx, errCtx context.Contex
 		if err != nil {
 			if ne, ok := err.(*net.OpError); ok {
 				if ne.Temporary() {
-					log.Println(&ServerError{s, "AcceptTCP", err})
+					log.Println(&Error{s, "AcceptTCP", err})
 					continue
 				}
 			}
@@ -95,7 +95,7 @@ func (s *Server) handleListener(shutdownCtx, gshutdownCtx, errCtx context.Contex
 					// fallthrough
 				}
 			}
-			log.Println(&ServerError{s, "AcceptTCP", err})
+			log.Println(&Error{s, "AcceptTCP", err})
 			errCancel()
 			return
 		}
@@ -107,5 +107,5 @@ func (s *Server) handleListener(shutdownCtx, gshutdownCtx, errCtx context.Contex
 }
 
 func listenerCloseError(err error) bool {
-	return strings.Contains(err.Error(), LISTENER_CLOSE_MATCHER)
+	return strings.Contains(err.Error(), listenerCloseMatcher)
 }

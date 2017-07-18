@@ -11,11 +11,11 @@ import (
 )
 
 const (
-	READ_BUF_SIZE = 4 * 1024
+	readBufSize = 4 * 1024
 )
 
 var (
-	writeCancelledError = errors.New("Write Context Canceled")
+	errWriteCancelled = errors.New("Write Context Canceled")
 )
 
 type ConnError struct {
@@ -62,7 +62,14 @@ func NewConn(shutdownCtx, gshutdownCtx, serverErrCtx context.Context, s *Server,
 }
 
 func (c *Conn) handleConnection() {
+	var isShutdown bool
 	defer func() {
+		if err := c.conn.CloseRead(); err != nil {
+			log.Println(&ConnError{c, "CloseRead", err})
+		}
+		if !isShutdown {
+			c.wg.Wait()
+		}
 		c.cancelWrite()
 		if err := c.conn.CloseWrite(); err != nil {
 			log.Println(&ConnError{c, "CloseWrite", err})
@@ -74,16 +81,10 @@ func (c *Conn) handleConnection() {
 
 	if err := c.conn.SetKeepAlive(true); err != nil {
 		log.Println(&ConnError{c, "SetKeepAlive", err})
-		if err := c.conn.CloseRead(); err != nil {
-			log.Println(&ConnError{c, "CloseRead", err})
-		}
 		return
 	}
 	if err := c.conn.SetKeepAlivePeriod(10 * time.Second); err != nil {
 		log.Println(&ConnError{c, "SetKeepAlivePeriod", err})
-		if err := c.conn.CloseRead(); err != nil {
-			log.Println(&ConnError{c, "CloseRead", err})
-		}
 		return
 	}
 
@@ -91,25 +92,10 @@ func (c *Conn) handleConnection() {
 
 	select {
 	case <-c.gshutdownCtx.Done():
-		if err := c.conn.CloseRead(); err != nil {
-			log.Println(&ConnError{c, "CloseRead", err})
-		}
-		c.wg.Wait()
 	case <-c.ctxRead.Done():
-		if err := c.conn.CloseRead(); err != nil {
-			log.Println(&ConnError{c, "CloseRead", err})
-		}
-		c.wg.Wait()
 	case <-c.shutdownCtx.Done():
-		if err := c.conn.CloseRead(); err != nil {
-			log.Println(&ConnError{c, "CloseRead", err})
-		}
+		isShutdown = true
 	case <-c.serverErrCtx.Done():
-		if err := c.conn.CloseRead(); err != nil {
-			log.Println(&ConnError{c, "CloseRead", err})
-		}
-		c.wg.Wait()
-		return
 	}
 }
 
@@ -119,7 +105,7 @@ func (c *Conn) handleRead() {
 	var n int
 	var err error
 
-	buf := make([]byte, READ_BUF_SIZE)
+	buf := make([]byte, readBufSize)
 
 	for {
 		n, err = c.conn.Read(buf)
@@ -163,7 +149,7 @@ func (c *Conn) handleEcho(buf []byte) {
 func (c *Conn) write(buf []byte) error {
 	select {
 	case <-c.ctxWrite.Done():
-		return writeCancelledError
+		return errWriteCancelled
 	case c.sem <- struct{}{}:
 		defer func() { <-c.sem }()
 		for {
