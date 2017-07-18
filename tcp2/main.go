@@ -1,12 +1,38 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"strings"
+	"sync"
+	"syscall"
 )
 
-func handleConnection(conn *net.TCPConn) {
-	defer conn.Close()
+const (
+	listenerCloseMatcher = "use of closed network connection"
+)
+
+func handleConnection(conn *net.TCPConn, ctx context.Context, wg *sync.WaitGroup) {
+	defer func() {
+		conn.Close()
+		wg.Done()
+	}()
+
+	readCtx, errRead := context.WithCancel(context.Background())
+
+	go handleRead(conn, errRead)
+
+	select {
+	case <-readCtx.Done():
+	case <-ctx.Done():
+	}
+}
+
+func handleRead(conn *net.TCPConn, errRead context.CancelFunc) {
+	defer errRead()
 
 	buf := make([]byte, 4*1024)
 
@@ -31,8 +57,11 @@ func handleConnection(conn *net.TCPConn) {
 	}
 }
 
-func handleListener(l *net.TCPListener) error {
-	defer l.Close()
+func handleListener(l *net.TCPListener, ctx context.Context, wg *sync.WaitGroup, chClosed chan struct{}) {
+	defer func() {
+		l.Close()
+		close(chClosed)
+	}()
 	for {
 		conn, err := l.AcceptTCP()
 		if err != nil {
@@ -42,11 +71,26 @@ func handleListener(l *net.TCPListener) error {
 					continue
 				}
 			}
-			return err
+			if listenerCloseError(err) {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					// fallthrough
+				}
+			}
+
+			log.Println("AcceptTCP", err)
+			return
 		}
 
-		go handleConnection(conn)
+		wg.Add(1)
+		go handleConnection(conn, ctx, wg)
 	}
+}
+
+func listenerCloseError(err error) bool {
+	return strings.Contains(err.Error(), listenerCloseMatcher)
 }
 
 func main() {
@@ -62,8 +106,32 @@ func main() {
 		return
 	}
 
-	err = handleListener(l)
-	if err != nil {
-		log.Println("handleListener", err)
+	sigChan := make(chan os.Signal, 1)
+	// Ignore all signals
+	signal.Ignore()
+	signal.Notify(sigChan, syscall.SIGINT)
+
+	var wg sync.WaitGroup
+	chClosed := make(chan struct{})
+
+	ctx, shutdown := context.WithCancel(context.Background())
+
+	go handleListener(l, ctx, &wg, chClosed)
+
+	log.Println("Server Started")
+
+	s := <-sigChan
+
+	switch s {
+	case syscall.SIGINT:
+		log.Println("Server Shutdown...")
+		shutdown()
+		l.Close()
+
+		wg.Wait()
+		<-chClosed
+		log.Println("Server Shutdown Completed")
+	default:
+		panic("unexpected signal has been received")
 	}
 }
