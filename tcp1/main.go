@@ -1,4 +1,4 @@
-package main
+package tcp1
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/dmmlabo/tcpserver_go/server"
+	"github.com/dmmlabo/tcpserver_go/tcp1/server"
 )
 
 var (
