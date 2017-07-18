@@ -1,87 +1,69 @@
-package tcp1
+package main
 
 import (
-	"context"
-	"errors"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
-
-	"github.com/dmmlabo/tcpserver_go/tcp1/server"
+	"net"
 )
 
-var (
-	InternalServerError = errors.New("server error occurred")
-)
+func handleConnection(conn *net.TCPConn) {
+	defer conn.Close()
 
-func main() {
-	sigChan := make(chan os.Signal, 1)
-	// Ignore all signals
-	signal.Ignore()
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
+	buf := make([]byte, 4*1024)
+
 	for {
-		log.Println("Server Starting Listen")
-		restart, err := startup(sigChan)
+		n, err := conn.Read(buf)
 		if err != nil {
-			log.Println("Error:", err)
+			if ne, ok := err.(net.Error); ok {
+				switch {
+				case ne.Temporary():
+					continue
+				}
+			}
+			log.Println("Read", err)
 			return
 		}
-		if !restart {
+
+		n, err = conn.Write(buf[:n])
+		if err != nil {
+			log.Println("Write", err)
 			return
 		}
 	}
 }
 
-func startup(sigChan <-chan os.Signal) (restart bool, err error) {
-	var svr *server.Server
-	svr, err = server.NewServer("127.0.0.1:12345")
-	if err != nil {
-		return
-	}
-	shutdownCtx, shutdown := context.WithCancel(context.Background())
-	gshutdownCtx, gshutdown := context.WithCancel(context.Background())
-
-	errCtx, err := svr.Listen(shutdownCtx, gshutdownCtx)
-	if err != nil {
-		return
-	}
-	log.Println("Server Listening: ", svr.Addr)
-
-	// Wait
-	select {
-	case s := <-sigChan:
-		switch s {
-		case syscall.SIGINT, syscall.SIGTERM:
-			log.Println("Server Shutdown...")
-			shutdown()
-			svr.StopListener()
-
-			svr.Wg.Wait()
-			<-svr.ChClosed
-			log.Println("Server Shutdown Completed")
-		case syscall.SIGQUIT:
-			log.Println("Server Graceful Shutdown...")
-			gshutdown()
-			svr.StopListener()
-
-			svr.Wg.Wait()
-			<-svr.ChClosed
-			log.Println("Server Graceful Shutdown Completed")
-		case syscall.SIGHUP:
-			gshutdown()
-			svr.StopListener()
-			restart = true
-			log.Println("Server Restarting...")
-
-			<-svr.ChClosed
-		default:
-			panic("unexpected signal has been received")
+func handleListener(l *net.TCPListener) error {
+	defer l.Close()
+	for {
+		conn, err := l.AcceptTCP()
+		if err != nil {
+			if ne, ok := err.(*net.OpError); ok {
+				if ne.Temporary() {
+					log.Println("AcceptTCP", err)
+					continue
+				}
+			}
+			return err
 		}
-	case <-errCtx.Done():
-		svr.Wg.Wait()
-		<-svr.ChClosed
-		return false, InternalServerError
+
+		go handleConnection(conn)
 	}
-	return restart, nil
+}
+
+func main() {
+	tcpAddr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:12345")
+	if err != nil {
+		log.Println("ResolveTCPAddr", err)
+		return
+	}
+
+	l, err := net.ListenTCP("tcp", tcpAddr)
+	if err != nil {
+		log.Println("ListenTCP", err)
+		return
+	}
+
+	err = handleListener(l)
+	if err != nil {
+		log.Println("handleListener", err)
+	}
 }
