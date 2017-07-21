@@ -12,48 +12,6 @@ const (
 	listenerCloseMatcher = "use of closed network connection"
 )
 
-func handleConnection(conn *net.TCPConn, ctx context.Context, wg *sync.WaitGroup) {
-	defer func() {
-		conn.Close()
-		wg.Done()
-	}()
-
-	readCtx, errRead := context.WithCancel(context.Background())
-
-	go handleRead(conn, errRead)
-
-	select {
-	case <-readCtx.Done():
-	case <-ctx.Done():
-	}
-}
-
-func handleRead(conn *net.TCPConn, errRead context.CancelFunc) {
-	defer errRead()
-
-	buf := make([]byte, 4*1024)
-
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			if ne, ok := err.(net.Error); ok {
-				switch {
-				case ne.Temporary():
-					continue
-				}
-			}
-			log.Println("Read", err)
-			return
-		}
-
-		n, err = conn.Write(buf[:n])
-		if err != nil {
-			log.Println("Write", err)
-			return
-		}
-	}
-}
-
 type Server struct {
 	addr     string
 	listener *net.TCPListener
@@ -127,8 +85,9 @@ func (s *Server) handleListener() {
 			return
 		}
 
+		c := newConn(s, conn)
 		s.Wg.Add(1)
-		go handleConnection(conn, s.ctx, &s.Wg)
+		go c.handleConnection()
 	}
 }
 
