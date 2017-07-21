@@ -36,7 +36,7 @@ func handleListener(l *net.TCPListener) error {
 	for {
 		conn, err := l.AcceptTCP()
 		if err != nil {
-			if ne, ok := err.(*net.OpError); ok {
+			if ne, ok := err.(net.Error); ok {
 				if ne.Temporary() {
 					log.Println("AcceptTCP", err)
 					continue

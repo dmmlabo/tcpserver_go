@@ -71,7 +71,7 @@ func (s *Server) handleListener() {
 	for {
 		conn, err := s.listener.AcceptTCP()
 		if err != nil {
-			if ne, ok := err.(*net.OpError); ok {
+			if ne, ok := err.(net.Error); ok {
 				if ne.Temporary() {
 					log.Println("AcceptTCP", err)
 					continue
