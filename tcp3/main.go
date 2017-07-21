@@ -26,17 +26,23 @@ func main() {
 
 	log.Println("Server Started")
 
-	sig := <-sigChan
+	select {
+	case sig := <-sigChan:
+		switch sig {
+		case syscall.SIGINT:
+			log.Println("Server Shutdown...")
+			svr.Shutdown()
 
-	switch sig {
-	case syscall.SIGINT:
-		log.Println("Server Shutdown...")
-		svr.Shutdown()
-
+			svr.Wg.Wait()
+			<-svr.ChClosed
+			log.Println("Server Shutdown Completed")
+		default:
+			panic("unexpected signal has been received")
+		}
+	case <-svr.AcceptCtx.Done():
+		log.Println("Server Error Occurred")
 		svr.Wg.Wait()
 		<-svr.ChClosed
 		log.Println("Server Shutdown Completed")
-	default:
-		panic("unexpected signal has been received")
 	}
 }

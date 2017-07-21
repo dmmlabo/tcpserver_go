@@ -13,22 +13,27 @@ const (
 )
 
 type Server struct {
-	addr     string
-	listener *net.TCPListener
-	ctx      context.Context
-	shutdown context.CancelFunc
-	Wg       sync.WaitGroup
-	ChClosed chan struct{}
+	addr      string
+	listener  *net.TCPListener
+	ctx       context.Context
+	shutdown  context.CancelFunc
+	AcceptCtx context.Context
+	errAccept context.CancelFunc
+	Wg        sync.WaitGroup
+	ChClosed  chan struct{}
 }
 
 func NewServer(parent context.Context, addr string) *Server {
 	ctx, shutdown := context.WithCancel(parent)
+	acceptCtx, errAccept := context.WithCancel(context.Background())
 	chClosed := make(chan struct{})
 	return &Server{
-		addr:     addr,
-		ctx:      ctx,
-		shutdown: shutdown,
-		ChClosed: chClosed,
+		addr:      addr,
+		ctx:       ctx,
+		shutdown:  shutdown,
+		AcceptCtx: acceptCtx,
+		errAccept: errAccept,
+		ChClosed:  chClosed,
 	}
 }
 
@@ -82,6 +87,7 @@ func (s *Server) handleListener() {
 			}
 
 			log.Println("AcceptTCP", err)
+			s.errAccept()
 			return
 		}
 
