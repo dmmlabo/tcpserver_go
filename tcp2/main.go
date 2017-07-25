@@ -15,7 +15,7 @@ const (
 	listenerCloseMatcher = "use of closed network connection"
 )
 
-func handleConnection(conn *net.TCPConn, ctx context.Context, wg *sync.WaitGroup) {
+func handleConnection(conn *net.TCPConn, serverCtx context.Context, wg *sync.WaitGroup) {
 	defer func() {
 		conn.Close()
 		wg.Done()
@@ -27,7 +27,7 @@ func handleConnection(conn *net.TCPConn, ctx context.Context, wg *sync.WaitGroup
 
 	select {
 	case <-readCtx.Done():
-	case <-ctx.Done():
+	case <-serverCtx.Done():
 	}
 }
 
@@ -57,7 +57,7 @@ func handleRead(conn *net.TCPConn, errRead context.CancelFunc) {
 	}
 }
 
-func handleListener(l *net.TCPListener, ctx context.Context, wg *sync.WaitGroup, chClosed chan struct{}) {
+func handleListener(l *net.TCPListener, serverCtx context.Context, wg *sync.WaitGroup, chClosed chan struct{}) {
 	defer func() {
 		l.Close()
 		close(chClosed)
@@ -73,7 +73,7 @@ func handleListener(l *net.TCPListener, ctx context.Context, wg *sync.WaitGroup,
 			}
 			if listenerCloseError(err) {
 				select {
-				case <-ctx.Done():
+				case <-serverCtx.Done():
 					return
 				default:
 					// fallthrough
@@ -85,7 +85,7 @@ func handleListener(l *net.TCPListener, ctx context.Context, wg *sync.WaitGroup,
 		}
 
 		wg.Add(1)
-		go handleConnection(conn, ctx, wg)
+		go handleConnection(conn, serverCtx, wg)
 	}
 }
 
@@ -114,9 +114,9 @@ func main() {
 	var wg sync.WaitGroup
 	chClosed := make(chan struct{})
 
-	ctx, shutdown := context.WithCancel(context.Background())
+	serverCtx, shutdown := context.WithCancel(context.Background())
 
-	go handleListener(l, ctx, &wg, chClosed)
+	go handleListener(l, serverCtx, &wg, chClosed)
 
 	log.Println("Server Started")
 
