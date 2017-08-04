@@ -13,36 +13,51 @@ const (
 )
 
 type Server struct {
-	addr      string
-	listener  *net.TCPListener
-	ctx       context.Context
-	shutdown  context.CancelFunc
-	AcceptCtx context.Context
-	errAccept context.CancelFunc
-	Wg        sync.WaitGroup
-	ChClosed  chan struct{}
+	addr        string
+	listener    *net.TCPListener
+	ctxShutdown context.Context
+	shutdown    context.CancelFunc
+	ctxGraceful context.Context
+	gshutdown   context.CancelFunc
+	AcceptCtx   context.Context
+	errAccept   context.CancelFunc
+	Wg          sync.WaitGroup
+	ChClosed    chan struct{}
 }
 
 func NewServer(parent context.Context, addr string) *Server {
-	ctx, shutdown := context.WithCancel(parent)
+	ctxShutdown, shutdown := context.WithCancel(parent)
+	ctxGraceful, gshutdown := context.WithCancel(context.Background())
 	acceptCtx, errAccept := context.WithCancel(context.Background())
 	chClosed := make(chan struct{})
 	return &Server{
-		addr:      addr,
-		ctx:       ctx,
-		shutdown:  shutdown,
-		AcceptCtx: acceptCtx,
-		errAccept: errAccept,
-		ChClosed:  chClosed,
+		addr:        addr,
+		ctxShutdown: ctxShutdown,
+		shutdown:    shutdown,
+		ctxGraceful: ctxGraceful,
+		gshutdown:   gshutdown,
+		AcceptCtx:   acceptCtx,
+		errAccept:   errAccept,
+		ChClosed:    chClosed,
 	}
 }
 
 func (s *Server) Shutdown() {
 	select {
-	case <-s.ctx.Done():
+	case <-s.ctxShutdown.Done():
 		// already shutdown
 	default:
 		s.shutdown()
+		s.listener.Close()
+	}
+}
+
+func (s *Server) GracefulShutdown() {
+	select {
+	case <-s.ctxGraceful.Done():
+		// already shutdown
+	default:
+		s.gshutdown()
 		s.listener.Close()
 	}
 }
@@ -79,7 +94,9 @@ func (s *Server) handleListener() {
 			}
 			if listenerCloseError(err) {
 				select {
-				case <-s.ctx.Done():
+				case <-s.ctxShutdown.Done():
+					return
+				case <-s.ctxGraceful.Done():
 					return
 				default:
 					// fallthrough
