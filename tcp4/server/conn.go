@@ -7,19 +7,19 @@ import (
 )
 
 type Conn struct {
-	svr     *Server
-	conn    *net.TCPConn
-	readCtx context.Context
-	errRead context.CancelFunc
+	svr      *Server
+	conn     *net.TCPConn
+	readCtx  context.Context
+	stopRead context.CancelFunc
 }
 
 func newConn(svr *Server, tcpConn *net.TCPConn) *Conn {
-	readCtx, errRead := context.WithCancel(context.Background())
+	readCtx, stopRead := context.WithCancel(context.Background())
 	return &Conn{
-		svr:     svr,
-		conn:    tcpConn,
-		readCtx: readCtx,
-		errRead: errRead,
+		svr:      svr,
+		conn:     tcpConn,
+		readCtx:  readCtx,
+		stopRead: stopRead,
 	}
 }
 
@@ -39,7 +39,7 @@ func (c *Conn) handleConnection() {
 }
 
 func (c *Conn) handleRead() {
-	defer c.errRead()
+	defer c.stopRead()
 
 	buf := make([]byte, 4*1024)
 
@@ -56,10 +56,27 @@ func (c *Conn) handleRead() {
 			return
 		}
 
-		n, err = c.conn.Write(buf[:n])
+		go c.handleEcho(buf[:n])
+	}
+}
+
+func (c *Conn) handleEcho(buf []byte) {
+	// do something
+
+	// write
+	for {
+		n, err := c.conn.Write(buf)
 		if err != nil {
-			log.Println("Write", err)
-			return
+			if nerr, ok := err.(net.Error); ok {
+				if nerr.Temporary() {
+					buf = buf[n:]
+					continue
+				}
+			}
+			log.Println("Write error", err)
+			// write error
+			c.stopRead()
 		}
+		return
 	}
 }
