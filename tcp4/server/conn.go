@@ -56,7 +56,9 @@ func (c *Conn) handleRead() {
 			return
 		}
 
-		go c.handleEcho(buf[:n])
+		wBuf := make([]byte, n)
+		copy(wBuf, buf[:n])
+		go c.handleEcho(wBuf)
 	}
 }
 
