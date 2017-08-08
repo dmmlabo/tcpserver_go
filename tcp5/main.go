@@ -11,11 +11,21 @@ import (
 )
 
 func main() {
-	sigChan := make(chan os.Signal, 1)
+	chSig := make(chan os.Signal, 1)
 	// Ignore all signals
 	signal.Ignore()
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	signal.Notify(chSig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
 
+	for {
+		restart := startup(chSig)
+		if restart {
+			continue
+		}
+		break
+	}
+}
+
+func startup(chSig chan os.Signal) (restart bool) {
 	svr := server.NewServer(context.Background(), "127.0.0.1:12345")
 
 	err := svr.Listen()
@@ -27,7 +37,7 @@ func main() {
 	log.Println("Server Started")
 
 	select {
-	case sig := <-sigChan:
+	case sig := <-chSig:
 		switch sig {
 		case syscall.SIGINT, syscall.SIGTERM:
 			log.Println("Server Shutdown...")
@@ -43,6 +53,12 @@ func main() {
 			svr.Wg.Wait()
 			<-svr.ChClosed
 			log.Println("Server Graceful Shutdown Completed")
+		case syscall.SIGHUP:
+			log.Println("Server Restarting...")
+			svr.GracefulShutdown()
+
+			<-svr.ChClosed
+			restart = true
 		default:
 			panic("unexpected signal has been received")
 		}
@@ -52,4 +68,5 @@ func main() {
 		<-svr.ChClosed
 		log.Println("Server Shutdown Completed")
 	}
+	return
 }
