@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"sync"
 )
 
 type Conn struct {
@@ -14,6 +15,7 @@ type Conn struct {
 	ctxWrite  context.Context
 	stopWrite context.CancelFunc
 	sem       chan struct{}
+	wg        sync.WaitGroup
 }
 
 func newConn(svr *Server, tcpConn *net.TCPConn) *Conn {
@@ -44,6 +46,9 @@ func (c *Conn) handleConnection() {
 	case <-c.ctxRead.Done():
 	case <-c.svr.ctxShutdown.Done():
 	case <-c.svr.AcceptCtx.Done():
+	case <-c.svr.ctxGraceful.Done():
+		c.conn.CloseRead()
+		c.wg.Wait()
 	}
 }
 
@@ -67,11 +72,13 @@ func (c *Conn) handleRead() {
 
 		wBuf := make([]byte, n)
 		copy(wBuf, buf[:n])
+		c.wg.Add(1)
 		go c.handleEcho(wBuf)
 	}
 }
 
 func (c *Conn) handleEcho(buf []byte) {
+	defer c.wg.Done()
 	// do something
 
 	// write
@@ -92,6 +99,7 @@ func (c *Conn) handleEcho(buf []byte) {
 				log.Println("Write error", err)
 				// write error
 				c.stopRead()
+				c.stopWrite()
 			}
 			return
 		}
