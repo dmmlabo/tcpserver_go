@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 
 	"github.com/dmmlabo/tcpserver_go/tcp5/server"
@@ -16,9 +15,6 @@ func main() {
 	// Ignore all signals
 	signal.Ignore()
 	signal.Notify(chSig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT, syscall.SIGHUP)
-
-	var wg sync.WaitGroup
-	defer wg.Wait()
 
 	host := loadConf()
 	svr := server.NewServer(context.Background(), host)
@@ -50,28 +46,13 @@ func main() {
 			case syscall.SIGHUP:
 				log.Println("Server Restarting...")
 
-				oldHost := host
 				host = loadConf()
 
-				// Check host have changed
-				if host == oldHost {
-					// TODO: load config to server
-					log.Println("Server Config Loaded")
-				} else {
-					// Restart Server
-					oldSvr := svr
-					svr = server.NewServer(context.Background(), host)
-					err = svr.Listen()
-					if err != nil {
-						log.Fatal("Listen()", err)
-					}
-					log.Println("Server Restarted")
-					wg.Add(1)
-					go func() {
-						oldSvr.GracefulShutdown()
-						wg.Done()
-					}()
+				svr, err = svr.Restart(context.Background(), host)
+				if err != nil {
+					log.Fatal(err)
 				}
+				log.Println("Server Restarted")
 				continue
 			default:
 				panic("unexpected signal has been received")

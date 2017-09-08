@@ -13,52 +13,93 @@ const (
 )
 
 type Server struct {
-	addr        string
-	listener    *net.TCPListener
+	addr      string
+	listener  *net.TCPListener
+	AcceptCtx context.Context
+	errAccept context.CancelFunc
+	Wg        sync.WaitGroup
+	ChClosed  chan struct{}
+	ctx       *contexts
+	chCtx     chan *contexts
+}
+
+type contexts struct {
 	ctxShutdown context.Context
 	shutdown    context.CancelFunc
 	ctxGraceful context.Context
 	gshutdown   context.CancelFunc
-	AcceptCtx   context.Context
-	errAccept   context.CancelFunc
-	Wg          sync.WaitGroup
-	ChClosed    chan struct{}
 }
 
 func NewServer(parent context.Context, addr string) *Server {
-	ctxShutdown, shutdown := context.WithCancel(parent)
-	ctxGraceful, gshutdown := context.WithCancel(context.Background())
+	ctx := newContext(parent)
 	acceptCtx, errAccept := context.WithCancel(context.Background())
 	chClosed := make(chan struct{})
+	chCtx := make(chan *contexts, 1)
 	return &Server{
-		addr:        addr,
+		addr:      addr,
+		AcceptCtx: acceptCtx,
+		errAccept: errAccept,
+		ChClosed:  chClosed,
+		ctx:       ctx,
+		chCtx:     chCtx,
+	}
+}
+
+func newContext(parent context.Context) *contexts {
+	ctxShutdown, shutdown := context.WithCancel(parent)
+	ctxGraceful, gshutdown := context.WithCancel(context.Background())
+	return &contexts{
 		ctxShutdown: ctxShutdown,
 		shutdown:    shutdown,
 		ctxGraceful: ctxGraceful,
 		gshutdown:   gshutdown,
-		AcceptCtx:   acceptCtx,
-		errAccept:   errAccept,
-		ChClosed:    chClosed,
 	}
 }
 
 func (s *Server) Shutdown() {
 	select {
-	case <-s.ctxShutdown.Done():
+	case <-s.ctx.ctxShutdown.Done():
 		// already shutdown
 	default:
-		s.shutdown()
+		s.ctx.shutdown()
 		s.listener.Close()
 	}
 }
 
 func (s *Server) GracefulShutdown() {
 	select {
-	case <-s.ctxGraceful.Done():
+	case <-s.ctx.ctxGraceful.Done():
 		// already shutdown
 	default:
-		s.gshutdown()
+		s.ctx.gshutdown()
 		s.listener.Close()
+	}
+}
+
+func (s *Server) Restart(parent context.Context, addr string) (*Server, error) {
+	if addr == s.addr {
+		// update contexts. not close listener
+		prevCtx := s.ctx
+		s.ctx = newContext(parent)
+		select {
+		case <-s.chCtx:
+			// clear s.chCtx if previous contexts have not been popped
+		default:
+		}
+		s.chCtx <- s.ctx
+		prevCtx.gshutdown()
+		return s, nil
+	} else {
+		// create new listener
+		nextServer := NewServer(parent, addr)
+		err := nextServer.Listen()
+		if err != nil {
+			return nil, err
+		}
+		s.GracefulShutdown()
+		s.Wg.Wait()
+		<-s.ChClosed
+		return nextServer, nil
 	}
 }
 
@@ -83,8 +124,18 @@ func (s *Server) handleListener() {
 		s.listener.Close()
 		close(s.ChClosed)
 	}()
+
+	ctx := s.ctx
+
 	for {
 		conn, err := s.listener.AcceptTCP()
+
+		select {
+		case ctx = <-s.chCtx:
+			// update ctx if changed
+		default:
+		}
+
 		if err != nil {
 			if ne, ok := err.(net.Error); ok {
 				if ne.Temporary() {
@@ -94,9 +145,9 @@ func (s *Server) handleListener() {
 			}
 			if listenerCloseError(err) {
 				select {
-				case <-s.ctxShutdown.Done():
+				case <-ctx.ctxShutdown.Done():
 					return
-				case <-s.ctxGraceful.Done():
+				case <-ctx.ctxGraceful.Done():
 					return
 				default:
 					// fallthrough
@@ -108,7 +159,7 @@ func (s *Server) handleListener() {
 			return
 		}
 
-		c := newConn(s, conn)
+		c := newConn(s, ctx, conn)
 		s.Wg.Add(1)
 		go c.handleConnection()
 	}

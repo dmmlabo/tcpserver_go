@@ -9,6 +9,7 @@ import (
 
 type Conn struct {
 	svr       *Server
+	ctx       *contexts
 	conn      *net.TCPConn
 	ctxRead   context.Context
 	stopRead  context.CancelFunc
@@ -18,12 +19,13 @@ type Conn struct {
 	wg        sync.WaitGroup
 }
 
-func newConn(svr *Server, tcpConn *net.TCPConn) *Conn {
+func newConn(svr *Server, ctx *contexts, tcpConn *net.TCPConn) *Conn {
 	ctxRead, stopRead := context.WithCancel(context.Background())
 	ctxWrite, stopWrite := context.WithCancel(context.Background())
 	sem := make(chan struct{}, 1)
 	return &Conn{
 		svr:       svr,
+		ctx:       ctx,
 		conn:      tcpConn,
 		ctxRead:   ctxRead,
 		stopRead:  stopRead,
@@ -44,9 +46,9 @@ func (c *Conn) handleConnection() {
 
 	select {
 	case <-c.ctxRead.Done():
-	case <-c.svr.ctxShutdown.Done():
+	case <-c.ctx.ctxShutdown.Done():
 	case <-c.svr.AcceptCtx.Done():
-	case <-c.svr.ctxGraceful.Done():
+	case <-c.ctx.ctxGraceful.Done():
 		c.conn.CloseRead()
 		c.wg.Wait()
 	}
